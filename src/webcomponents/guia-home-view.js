@@ -14,6 +14,8 @@ import {
   getGoogleMapsUrl,
   getWhatsAppShareUrl,
 } from '../services/equipamentos-store.js'
+import { storageService } from '../services/storage-service.js'
+import { syncService } from '../services/sync-service.js'
 
 const SUGESTOES_RAPIDAS = [
   { label: '🧩 Autismo / Fono / Terapias', query: 'autismo', necessidadeId: 'todos' },
@@ -34,6 +36,7 @@ export class GuiaHomeView extends LitElement {
     basemap: { type: String },
     showDistritoBounds: { type: Boolean },
     mobileTab: { type: String }, // 'ambos' | 'mapa' | 'lista'
+    _favoritesCount: { state: true },
   }
 
   static styles = css`
@@ -637,8 +640,34 @@ export class GuiaHomeView extends LitElement {
     this.basemap = 'osm'
     this.showDistritoBounds = true
     this.mobileTab = 'ambos'
+    this._favoritesCount = storageService.getFavorites().length
     this._markersLayerGroup = null
     this._markerById = new Map()
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    this._unsubStorage = storageService.subscribe(() => {
+      this._favoritesCount = storageService.getFavorites().length
+      this.requestUpdate()
+    })
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._unsubStorage?.()
+  }
+
+  _toggleFavorite(item) {
+    const { added, entry } = storageService.toggleFavorite(item.id)
+    if (added) {
+      syncService.enqueue('favorite.upsert', {
+        equipamentoId: item.id,
+        notaPessoal: entry?.notaPessoal || '',
+      })
+    } else {
+      syncService.enqueue('favorite.remove', { equipamentoId: item.id })
+    }
   }
 
   firstUpdated() {
@@ -861,6 +890,13 @@ export class GuiaHomeView extends LitElement {
             @click=${() => navigate('/como-comecar')}
           >
             🧭 Não sabe onde ir? Veja o Passo a Passo
+          </button>
+          <button
+            type="button"
+            class="banner-btn white"
+            @click=${() => navigate('/meus-locais')}
+          >
+            ⭐ Meus Locais Salvos (${this._favoritesCount})
           </button>
           <button
             type="button"
@@ -1242,6 +1278,17 @@ export class GuiaHomeView extends LitElement {
                 </a>
               `
             )}
+
+            <button
+              type="button"
+              class="action-link action-pin"
+              style=${storageService.isFavorite(item.id)
+                ? 'background:#fef3c7;color:#92400e;border-color:#f59e0b;'
+                : ''}
+              @click=${() => this._toggleFavorite(item)}
+            >
+              ${storageService.isFavorite(item.id) ? '⭐ Salvo' : '☆ Salvar Local'}
+            </button>
 
             <button
               type="button"

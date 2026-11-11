@@ -1,0 +1,82 @@
+@startuml Guia Regional PWA - Supabase schema
+
+title Guia Regional de Políticas Públicas — Esquema Supabase (Autenticação, Autorização RBAC e Sincronização)
+
+entity "auth.users" as users {
+  * id : uuid
+  --
+  email : text
+  encrypted_password : text
+  raw_user_meta_data : jsonb
+  created_at : timestamptz
+}
+
+note right of users
+  Gerenciada pelo Supabase Auth.
+  Criada em auth.signUp() e usada para
+  recuperação de senha por e-mail
+  (auth.resetPasswordForEmail).
+end note
+
+entity "public.profiles" as profiles {
+  * id : uuid
+  --
+  * role : text = 'user' ('user' | 'educator' | 'admin')
+  name : text
+  distrito_preferido : text
+  created_at : timestamptz
+  updated_at : timestamptz
+}
+
+note bottom of profiles
+  RLS: usuário enxerga e edita o próprio perfil (auth.uid() = id).
+  Criada automaticamente pelo trigger on_auth_user_created.
+  O campo `role` controla a autorização (RBAC) via função
+  `public.is_admin_or_educator()`.
+end note
+
+entity "public.favorite_equipamentos" as favs {
+  * id : uuid
+  --
+  * user_id : uuid
+  * equipamento_id : integer
+  nota_pessoal : text
+  created_at : timestamptz
+  updated_at : timestamptz
+}
+
+note bottom of favs
+  RLS: usuário só enxerga/insere/atualiza/remove
+  os próprios locais salvos (auth.uid() = user_id).
+  Chave única: (user_id, equipamento_id).
+  Sincronizado com localStorage via outbox (sync-service.js).
+end note
+
+entity "public.equipamento_sugestoes" as sugestoes {
+  * id : uuid
+  --
+  * user_id : uuid
+  equipamento_id : integer
+  * nome_equipamento : text
+  * distrito : text
+  * tipo_contribuicao : text
+  * descricao : text
+  * status : text = 'pending'
+  created_at : timestamptz
+  reviewed_at : timestamptz
+  reviewed_by : uuid
+}
+
+note bottom of sugestoes
+  RLS + Autorização:
+  - Qualquer usuário autenticado pode enviar sugestões (status = 'pending').
+  - Todos veem sugestões 'approved' ou as próprias.
+  - Apenas perfis 'admin' ou 'educator' (`is_admin_or_educator()`)
+    podem aprovar ou rejeitar contribuições.
+end note
+
+users ||--|| profiles : "id (1:1, via trigger)"
+users ||--o{ favs : "user_id (1:N)"
+users ||--o{ sugestoes : "user_id (1:N)"
+
+@enduml
