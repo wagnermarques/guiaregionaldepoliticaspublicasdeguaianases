@@ -1,7 +1,123 @@
 import equipamentosData from '../data/equipamentos.json'
 import distritosGeoJson from '../data/distritos.geojson?raw'
+import { supabase } from './supabase-client.js'
 
 export const DISTRITOS_GEOJSON = JSON.parse(distritosGeoJson)
+
+// Lista reativa em memória com mesclagem de dados estáticos + atualizações em nuvem
+let dynamicEquipamentos = [...equipamentosData]
+const storeListeners = new Set()
+
+export function subscribeEquipamentos(callback) {
+  storeListeners.add(callback)
+  callback(dynamicEquipamentos)
+  return () => storeListeners.delete(callback)
+}
+
+function notifyStoreChange() {
+  storeListeners.forEach((fn) => {
+    try {
+      fn(dynamicEquipamentos)
+    } catch (err) {
+      console.warn('Erro ao notificar listener do store:', err)
+    }
+  })
+}
+
+/**
+ * Carrega alterações do banco Supabase em tempo real (se online)
+ * e mescla com os 78 equipamentos do JSON base.
+ */
+export async function syncEquipamentosFromCloud() {
+  if (!supabase) return dynamicEquipamentos
+  try {
+    const { data, error } = await supabase
+      .from('equipamentos')
+      .select('*')
+      .order('id', { ascending: true })
+
+    if (error || !data || data.length === 0) return dynamicEquipamentos
+
+    // Mapeia atualizações da nuvem sobre os dados estáticos
+    const map = new Map(equipamentosData.map((e) => [Number(e.id), { ...e }]))
+    data.forEach((cloudItem) => {
+      const id = Number(cloudItem.id)
+      const existing = map.get(id) || {}
+      map.set(id, {
+        ...existing,
+        ...cloudItem,
+        telefones: Array.isArray(cloudItem.telefones) ? cloudItem.telefones : (existing.telefones || []),
+        celulares_plantao: Array.isArray(cloudItem.celulares_plantao) ? cloudItem.celulares_plantao : (existing.celulares_plantao || []),
+      })
+    })
+
+    dynamicEquipamentos = Array.from(map.values())
+    notifyStoreChange()
+    return dynamicEquipamentos
+  } catch (err) {
+    console.warn('Falha ao sincronizar equipamentos da nuvem (mantendo cache local):', err)
+    return dynamicEquipamentos
+  }
+}
+
+// Inicia busca em background se configurado
+if (typeof window !== 'undefined' && supabase) {
+  setTimeout(() => {
+    syncEquipamentosFromCloud()
+  }, 100)
+}
+
+/**
+ * Salva ou atualiza um equipamento no Supabase (restrito a 'guia_admin' via RLS).
+ */
+export async function saveEquipamentoCloud(equipamentoData) {
+  if (!supabase) throw new Error('Supabase não configurado')
+  const id = Number(equipamentoData.id)
+  if (!id) throw new Error('ID do equipamento inválido')
+
+  const payload = {
+    id,
+    nome: equipamentoData.nome,
+    categoria: equipamentoData.categoria,
+    subtipo: equipamentoData.subtipo,
+    distrito: equipamentoData.distrito,
+    regiao: equipamentoData.regiao || 'Zona Leste',
+    endereco_completo: equipamentoData.endereco_completo,
+    bairro: equipamentoData.bairro || '',
+    cep: equipamentoData.cep || '',
+    telefones: Array.isArray(equipamentoData.telefones) ? equipamentoData.telefones : [],
+    celulares_plantao: Array.isArray(equipamentoData.celulares_plantao) ? equipamentoData.celulares_plantao : [],
+    email: equipamentoData.email || '',
+    horario_funcionamento: equipamentoData.horario_funcionamento || '',
+    servicos_oferecidos: equipamentoData.servicos_oferecidos || '',
+    observacoes: equipamentoData.observacoes || '',
+    como_acessar: equipamentoData.como_acessar || '',
+    urgencia_24h: Boolean(equipamentoData.urgencia_24h),
+    lat: equipamentoData.lat ? Number(equipamentoData.lat) : null,
+    lng: equipamentoData.lng ? Number(equipamentoData.lng) : null,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { data, error } = await supabase
+    .from('equipamentos')
+    .upsert(payload)
+    .select()
+    .single()
+
+  if (error) {
+    throw new Error(error.message || 'Erro ao salvar equipamento no Supabase')
+  }
+
+  // Atualiza cache em memória
+  const index = dynamicEquipamentos.findIndex((e) => Number(e.id) === id)
+  if (index >= 0) {
+    dynamicEquipamentos[index] = { ...dynamicEquipamentos[index], ...data }
+  } else {
+    dynamicEquipamentos.push(data)
+  }
+  notifyStoreChange()
+  return data
+}
 
 /**
  * Grupos pensados para o usuário leigo (mães, pais, responsáveis, moradores e educadores),
@@ -211,11 +327,11 @@ export function getVisualStyleForEquipamento(e) {
 }
 
 export function getAllEquipamentos() {
-  return equipamentosData
+  return dynamicEquipamentos
 }
 
 export function getEquipamentoById(id) {
-  return equipamentosData.find((e) => Number(e.id) === Number(id)) || null
+  return dynamicEquipamentos.find((e) => Number(e.id) === Number(id)) || null
 }
 
 export function filterEquipamentos({
@@ -227,7 +343,7 @@ export function filterEquipamentos({
   const nec = NECESSIDADES_FILTROS.find((n) => n.id === necessidadeId) || NECESSIDADES_FILTROS[0]
   const cleanQuery = normalizeText(query)
 
-  return equipamentosData.filter((e) => {
+  return dynamicEquipamentos.filter((e) => {
     if (!nec.match(e)) return false
 
     if (distrito !== 'todos') {

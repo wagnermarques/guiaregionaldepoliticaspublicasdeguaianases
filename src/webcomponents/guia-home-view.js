@@ -13,9 +13,12 @@ import {
   formatPhoneHref,
   getGoogleMapsUrl,
   getWhatsAppShareUrl,
+  subscribeEquipamentos,
 } from '../services/equipamentos-store.js'
 import { storageService } from '../services/storage-service.js'
 import { syncService } from '../services/sync-service.js'
+import { authService } from '../services/auth-service.js'
+import './guia-edit-modal.js'
 
 const SUGESTOES_RAPIDAS = [
   { label: '🧩 Autismo / Fono / Terapias', query: 'autismo', necessidadeId: 'todos' },
@@ -37,6 +40,8 @@ export class GuiaHomeView extends LitElement {
     showDistritoBounds: { type: Boolean },
     mobileTab: { type: String }, // 'ambos' | 'mapa' | 'lista'
     _favoritesCount: { state: true },
+    _isGuiaAdmin: { state: true },
+    _editingEquipamento: { state: true },
   }
 
   static styles = css`
@@ -621,6 +626,12 @@ export class GuiaHomeView extends LitElement {
       border-color: #86efac;
     }
 
+    .action-edit {
+      background: #fef08a;
+      color: #854d0e;
+      border-color: #facc15;
+    }
+
     .empty-box {
       padding: 36px 20px;
       text-align: center;
@@ -641,6 +652,8 @@ export class GuiaHomeView extends LitElement {
     this.showDistritoBounds = true
     this.mobileTab = 'ambos'
     this._favoritesCount = storageService.getFavorites().length
+    this._isGuiaAdmin = authService.isGuiaAdmin()
+    this._editingEquipamento = null
     this._markersLayerGroup = null
     this._markerById = new Map()
   }
@@ -651,11 +664,21 @@ export class GuiaHomeView extends LitElement {
       this._favoritesCount = storageService.getFavorites().length
       this.requestUpdate()
     })
+    this._unsubAuth = authService.subscribe(() => {
+      this._isGuiaAdmin = authService.isGuiaAdmin()
+      this.requestUpdate()
+    })
+    this._unsubStore = subscribeEquipamentos(() => {
+      this.requestUpdate()
+      this._renderMapMarkers()
+    })
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     this._unsubStorage?.()
+    this._unsubAuth?.()
+    this._unsubStore?.()
   }
 
   _toggleFavorite(item) {
@@ -1040,6 +1063,7 @@ export class GuiaHomeView extends LitElement {
       </div>
 
       <!-- 4. Área Principal: Mapa Interativo (<fzl-geo-map>) + Lista de Locais (<fzl-lit-card>) -->
+      ${this._renderEditModal()}
       <div class="explorer-split">
         <!-- Coluna Esquerda: Mapa -->
         <div class="map-column">
@@ -1173,6 +1197,20 @@ export class GuiaHomeView extends LitElement {
           >
             📲 Enviar no WhatsApp
           </a>
+
+          ${this._isGuiaAdmin
+            ? html`
+                <button
+                  type="button"
+                  class="action-link action-edit"
+                  @click=${() => {
+                    this._editingEquipamento = item
+                  }}
+                >
+                  ✏️ Editar Dados
+                </button>
+              `
+            : ''}
         </div>
       </div>
     `
@@ -1315,9 +1353,40 @@ export class GuiaHomeView extends LitElement {
             >
               📲 WhatsApp
             </a>
+
+            ${this._isGuiaAdmin
+              ? html`
+                  <button
+                    type="button"
+                    class="action-link action-edit"
+                    @click=${() => {
+                      this._editingEquipamento = item
+                    }}
+                  >
+                    ✏️ Editar Dados
+                  </button>
+                `
+              : ''}
           </div>
         </fzl-lit-card>
       </div>
+    `
+  }
+
+  _renderEditModal() {
+    return html`
+      <guia-edit-modal
+        ?open=${Boolean(this._editingEquipamento)}
+        .equipamento=${this._editingEquipamento}
+        @modal-closed=${() => {
+          this._editingEquipamento = null
+        }}
+        @equipamento-updated=${(e) => {
+          if (this.selectedEquipamento?.id === e.detail.id) {
+            this.selectedEquipamento = e.detail
+          }
+        }}
+      ></guia-edit-modal>
     `
   }
 }

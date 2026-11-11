@@ -5,20 +5,24 @@ let currentRole = 'user'
 const listeners = new Set()
 
 async function fetchUserProfile(userId) {
-  if (!supabase || !userId) return { role: 'user', name: null, distrito_preferido: null }
+  if (!supabase || !userId) return { role: 'user', role_guia: 'user', name: null, distrito_preferido: null }
   try {
     const { data } = await supabase
       .from('profiles')
-      .select('role, name, distrito_preferido')
+      .select('role, role_guia, name, distrito_preferido')
       .eq('id', userId)
       .single()
+    
+    // Preferência para role_guia isolado do app, com fallback para role legado
+    const roleGuia = data?.role_guia || (data?.role === 'admin' ? 'guia_admin' : data?.role) || 'user'
     return {
       role: data?.role || 'user',
+      role_guia: roleGuia,
       name: data?.name || null,
       distrito_preferido: data?.distrito_preferido || null,
     }
   } catch {
-    return { role: 'user', name: null, distrito_preferido: null }
+    return { role: 'user', role_guia: 'user', name: null, distrito_preferido: null }
   }
 }
 
@@ -26,8 +30,9 @@ async function handleSessionChange(event, session) {
   currentSession = session
   if (session?.user?.id) {
     const profile = await fetchUserProfile(session.user.id)
-    currentRole = profile.role
-    session.user.role = profile.role
+    currentRole = profile.role_guia
+    session.user.role = profile.role_guia
+    session.user.role_guia = profile.role_guia
     if (profile.name && !session.user.user_metadata?.name) {
       session.user.user_metadata = { ...session.user.user_metadata, name: profile.name }
     }
@@ -68,7 +73,7 @@ export const authService = {
     return currentSession?.user ?? null
   },
 
-  /** Retorna o papel de autorização ('user' | 'educator' | 'admin') do usuário logado. */
+  /** Retorna o papel de autorização ('user' | 'educator' | 'guia_admin' | 'super_admin') do usuário logado. */
   getCurrentRole() {
     return currentSession?.user ? currentRole : null
   },
@@ -76,12 +81,17 @@ export const authService = {
   /** Verifica se o usuário autenticado possui um dos papéis exigidos (RBAC). */
   hasRole(...roles) {
     if (!currentSession?.user) return false
-    return roles.includes(currentRole)
+    return roles.includes(currentRole) || currentRole === 'super_admin'
   },
 
-  /** Verifica se o usuário tem autorização de Educador(a)/Mediador(a) ou Administrador(a). */
+  /** Verifica se o usuário é administrador específico do Guia Regional. */
+  isGuiaAdmin() {
+    return this.hasRole('guia_admin', 'super_admin')
+  },
+
+  /** Verifica se o usuário tem autorização de Educador(a)/Mediador(a) ou Administrador(a) do Guia. */
   isAdminOrEducator() {
-    return this.hasRole('admin', 'educator')
+    return this.hasRole('guia_admin', 'educator', 'super_admin')
   },
 
   /** Chama o callback imediatamente com a sessão atual e a cada mudança. */

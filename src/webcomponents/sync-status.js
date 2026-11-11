@@ -11,7 +11,9 @@ import { authService } from '../services/auth-service.js'
 const TOAST_MS = 4000
 
 const ROLE_LABELS = {
-  admin: '🛡️ Administrador(a)',
+  super_admin: '⚡ Super Administrador(a)',
+  guia_admin: '🛡️ Administrador(a) do Guia',
+  admin: '🛡️ Administrador(a) do Guia',
   educator: '🏫 Educador(a) / Equipe DREG',
   user: '👤 Usuário(a) / Família',
 }
